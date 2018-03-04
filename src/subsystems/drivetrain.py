@@ -6,6 +6,7 @@ from wpilib.drive.differentialdrive import DifferentialDrive
 from wpilib.speedcontrollergroup import SpeedControllerGroup
 from wpilib.smartdashboard import SmartDashboard as SD
 from wpilib.command import Subsystem
+from robotpy_ext.common_drivers.navx import AHRS
 
 
 class DriveTrain(Subsystem):
@@ -18,7 +19,8 @@ class DriveTrain(Subsystem):
     def __init__(self, robot):
 
         self.robot = robot
-
+        
+        self.ahrs = AHRS.create_spi()    
         # Initialize all controllers
         self.driveLeftMaster = Talon(self.robot.kDriveTrain['left_master'])
         self.driveLeftSlave = Talon(self.robot.kDriveTrain['left_slave'])
@@ -33,6 +35,25 @@ class DriveTrain(Subsystem):
         # Connect the slaves to the masters on each side
         self.driveLeftSlave.follow(self.driveLeftMaster)
         self.driveRightSlave.follow(self.driveRightMaster)
+        
+
+        self.driveLeftMaster.configNominalOutputForward(0, 0)
+        self.driveLeftMaster.configNominalOutputReverse(0, 0)
+
+        self.driveRightMaster.configNominalOutputForward(0, 0)        
+        self.driveRightMaster.configNominalOutputReverse(0, 0)
+                
+        self.speed = .4
+        self.driveLeftMaster.configPeakOutputForward(self.speed, 0)
+        self.driveLeftMaster.configPeakOutputReverse(-self.speed, 0)
+        
+        self.driveRightMaster.configPeakOutputForward(self.speed, 0)
+        self.driveRightMaster.configPeakOutputReverse(-self.speed, 0)
+        
+
+
+        self.driveLeftMaster.setSafetyEnabled(False)
+        self.driveRightMaster.setSafetyEnabled(False)
 
         # Makes sure both sides' controllers show green and use positive
         # values to move the bot forward.
@@ -40,6 +61,8 @@ class DriveTrain(Subsystem):
         self.driveLeftMaster.setInverted(False)
         self.driveRightSlave.setInverted(True)
         self.driveRightMaster.setInverted(True)
+        
+        self.PID()
         
         
         """
@@ -58,6 +81,9 @@ class DriveTrain(Subsystem):
         # results in a positive increase in the encoder ticks.
         self.driveLeftMaster.setSensorPhase(True)
         self.driveRightMaster.setSensorPhase(True)
+        
+        self.driveLeftMaster.setSelectedSensorPosition(0, 0, 0)
+        self.driveRightMaster.setSelectedSensorPosition(0, 0, 0)
 
         # these supposedly aren't part of the WPI_TalonSRX class
         # self.driveLeftMaster.setSelectedSensorPostion(0, 0, 10)
@@ -87,16 +113,49 @@ class DriveTrain(Subsystem):
         self.driveControllerRight.setInverted(True)
         self.drive = DifferentialDrive(self.driveControllerLeft,
                                        self.driveControllerRight)
+        self.drive.setSafetyEnabled(False)
+
+        self.previousError = 0
 
         super().__init__()
+    def autoInit(self):
+        self.speed = .4
+        self.driveLeftMaster.configPeakOutputForward(self.speed, 0)
+        self.driveLeftMaster.configPeakOutputReverse(-self.speed, 0)
+        
+        self.driveRightMaster.configPeakOutputForward(self.speed, 0)
+        self.driveRightMaster.configPeakOutputReverse(-self.speed, 0) 
+        
+#         self.driveLeftMaster.config_kP(0, .055, 0)
+#         self.driveRightMaster.config_kP(0, .055, 0)
+
+        self.driveLeftMaster.config_kP(0, 20, 0)
+        self.driveRightMaster.config_kP(0, 20, 0)
+        
+        self.driveLeftMaster.config_kF(0, 0.0, 0)
+        self.driveRightMaster.config_kF(0, 0.0, 0)
+        
+  
+        
+    def teleInit(self):
+        self.speed = .75
+        self.driveLeftMaster.configPeakOutputForward(self.speed, 0)
+        self.driveLeftMaster.configPeakOutputReverse(-self.speed, 0)
+        
+        self.driveRightMaster.configPeakOutputForward(self.speed, 0)
+        self.driveRightMaster.configPeakOutputReverse(-self.speed, 0)
+        
+        
+        self.driveLeftMaster.config_kP(0, 0.0, 0)
+        self.driveRightMaster.config_kP(0, 0.0, 0)
+        
+        self.driveLeftMaster.config_kF(0, 0.313, 0)
+        self.driveRightMaster.config_kF(0, 0.313, 0)
 
     def moveToPosition(self, position, side='left'):
-
-        if side == 'left':
-            self.driveLeftMaster.setSafetyEnabled(False)
-            self.driveLeftMaster.set(ctre.talonsrx.TalonSRX.ControlMode.Position, position)
-        else:
-            self.driveRightMaster.set(ctre.talonsrx.TalonSRX.ControlMode.Position, position)
+        self.driveLeftMaster.set(ctre.talonsrx.TalonSRX.ControlMode.Position, position)
+        
+        self.driveRightMaster.set(ctre.talonsrx.TalonSRX.ControlMode.Position, position)
 
     def stop(self):
         self.drive.stopMotor()
@@ -118,22 +177,22 @@ class DriveTrain(Subsystem):
             self.drive.arcadeDrive(-speed, rotation, True)
             
     def arcadeWithRPM(self, speed, rotation, maxRPM):
+        self.updateSD()
+        self.driveLeftMaster.setSafetyEnabled(False)
         
         if self.robot.dStick.getRawButtonReleased(3):
             self.robotFrontToggleCount += 1
             
-        self.driveLeftMaster.setSafetyEnabled(False)
+        if self.robotFrontToggleCount%2 == 0:
+            XSpeed = wpilib.RobotDrive.limit(speed)
+        else:
+            XSpeed = wpilib.RobotDrive.limit(-speed)
         
-        XSpeed = wpilib.RobotDrive.limit(speed)
         XSpeed = self.applyDeadband(XSpeed, .02)
 
         ZRotation = wpilib.RobotDrive.limit(rotation)
         ZRotation = self.applyDeadband(ZRotation, .02) 
         
-        if self.robotFrontToggleCount%2 == 1:
-            XSpeed = -XSpeed
-        
-       
         XSpeed = math.copysign(XSpeed * XSpeed, XSpeed)
         ZRotation = math.copysign(ZRotation * ZRotation, ZRotation)
 
@@ -227,6 +286,9 @@ class DriveTrain(Subsystem):
         SD.putNumber('DifferenceVel', differenceVel)
         SD.putNumber('DifferencePos', differencePos)
         
+        SD.putNumber('Angle', self.ahrs.getAngle())
+        SD.putNumber('Adjusted Angle', self.ahrs.getAngle())
+
         SD.putNumber('Left Max Vel', self.leftMaxVel)
         SD.putNumber('Right Max Vel', self.rightMaxVel)
         
@@ -252,6 +314,7 @@ class DriveTrain(Subsystem):
         #SD.putNumber(
         #    'Left Integral',
         #    self.driveLeftMaster.getIntegralAccumulator(0))
+  
     def applyDeadband(self, value, deadband):
         """Returns 0.0 if the given value is within the specified range around zero. The remaining range
         between the deadband and 1.0 is scaled from 0.0 to 1.0.
@@ -265,3 +328,50 @@ class DriveTrain(Subsystem):
             else:
                 return (value + deadband) / (1.0 - deadband)
         return 0.0
+    
+        
+    def setAngle(self, angle, tolerance):
+        #self.tolerance = tolerance
+            
+        self.turnController.setSetpoint(angle)
+       
+        
+        if (self.ahrs.getYaw() <= abs(angle + tolerance)) and (self.ahrs.getYaw() >= abs(angle - tolerance)):            
+            self.turnController.disable()
+            
+            self.driveLeftMaster.set(0)
+            self.driveRightMaster.set(0)
+            
+        else:
+            self.turnController.enable()
+            
+            self.drive.arcadeDrive(0, self.output)
+
+            
+
+            #self.leftTurnController.setSetpoint(angle)
+    
+            
+    def isInGyroPosition(self):
+        return ((self.ahrs.getYaw() - self.robot.autonomous.startingYaw) <= (self.turnController.getSetpoint() + self.robot.autonomous.ANGLE_TOLERANCE)) and ((self.ahrs.getYaw() - self.robot.autonomous.startingYaw) >= (self.turnController.getSetpoint() - self.robot.autonomous.ANGLE_TOLERANCE))
+                   
+    def PID(self):
+        self.kP = 0.3
+        self.kI = 0.00
+        self.kD = 0.00
+        self.kF = 0.00
+        
+        self.turnController = wpilib.PIDController(self.kP, self.kI, self.kD, self.kF, self.ahrs, output=self)
+        
+                
+        self.turnController.setInputRange(-180, 180)
+        self.turnController.setOutputRange(-0.5, 0.5)
+
+        
+        self.turnController.disable()
+
+        
+        
+    def pidWrite(self, output):
+        self.output = output       
+                
